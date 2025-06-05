@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:logging/logging.dart';
 
@@ -258,6 +259,88 @@ class PhoenixChannel {
         payload,
         newTimeout,
       );
+
+  /// Push a binary message to the Phoenix server.
+  Push pushBinary(
+    /// The name of the message's event.
+    ///
+    /// This can be any string, as long as it matches with something
+    /// expected on the backend implementation.
+    String eventName,
+
+    /// The binary data payload.
+    ///
+    /// This should be a Uint8List containing the binary data to send.
+    Uint8List binaryData, [
+    /// Manually set timeout value for this push.
+    ///
+    /// If not provided, a longer default timeout will be used for binary data.
+    Duration? newTimeout,
+  ]) {
+    assert(_joinedOnce);
+
+    // Use a longer timeout for binary data by default (30 seconds)
+    final binaryTimeout = newTimeout ?? const Duration(seconds: 30);
+
+    final pushEvent = Push.binary(
+      this,
+      event: PhoenixChannelEvent.custom(eventName),
+      binaryPayload: binaryData,
+      timeout: binaryTimeout,
+    );
+
+    if (canPush) {
+      _logger.finest(() => 'Sending out binary push ${pushEvent.ref}');
+      pushEvent.send();
+    } else {
+      if (_state == PhoenixChannelState.closed ||
+          _state == PhoenixChannelState.errored) {
+        throw ChannelClosedError('Can\'t push binary event on a $_state channel');
+      }
+
+      _logger.finest(
+          () => 'Buffering binary push ${pushEvent.ref} for later send ($_state)');
+      pushBuffer.add(pushEvent);
+    }
+
+    return pushEvent;
+  }
+
+  /// Push a binary message to the Phoenix server without waiting for a reply.
+  /// 
+  /// This is useful for streaming data like audio where you don't need 
+  /// to wait for acknowledgment from the server.
+  void pushBinaryFireAndForget(
+    /// The name of the message's event.
+    String eventName,
+
+    /// The binary data payload.
+    Uint8List binaryData,
+  ) {
+    assert(_joinedOnce);
+
+    final pushEvent = Push.binary(
+      this,
+      event: PhoenixChannelEvent.custom(eventName),
+      binaryPayload: binaryData,
+      timeout: const Duration(seconds: 5), // Short timeout since we're not waiting
+    );
+
+    if (canPush) {
+      _logger.finest(() => 'Sending out fire-and-forget binary push ${pushEvent.ref}');
+      pushEvent.send();
+      // Don't wait for the response - just send and forget
+    } else {
+      if (_state == PhoenixChannelState.closed ||
+          _state == PhoenixChannelState.errored) {
+        throw ChannelClosedError('Can\'t push binary event on a $_state channel');
+      }
+
+      _logger.finest(
+          () => 'Buffering fire-and-forget binary push ${pushEvent.ref} for later send ($_state)');
+      pushBuffer.add(pushEvent);
+    }
+  }
 
   /// Push a message with a valid [PhoenixChannelEvent] name.
   ///

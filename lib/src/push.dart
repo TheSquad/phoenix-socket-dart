@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:logging/logging.dart';
 
@@ -84,7 +85,22 @@ class Push {
     this.timeout,
   })  : _channel = channel,
         _logger = Logger('phoenix_socket.push.${channel.loggerName}'),
-        _responseCompleter = Completer<PushResponse>();
+        _responseCompleter = Completer<PushResponse>(),
+        _binaryPayload = null;
+
+  /// Build a Push message with binary payload from its content and associated channel.
+  ///
+  /// Prefer using [PhoenixChannel.pushBinary] instead of using this.
+  Push.binary(
+    PhoenixChannel channel, {
+    this.event,
+    required Uint8List binaryPayload,
+    this.timeout,
+  })  : _channel = channel,
+        _logger = Logger('phoenix_socket.push.${channel.loggerName}'),
+        _responseCompleter = Completer<PushResponse>(),
+        payload = null,
+        _binaryPayload = binaryPayload;
 
   final Logger _logger;
   final Map<String, List<ReceiverCallback>> _receivers = {};
@@ -95,6 +111,9 @@ class Push {
   /// A getter function that yields the payload of the pushed message,
   /// usually a JSON object.
   final PayloadGetter? payload;
+
+  /// Binary payload for the pushed message.
+  final Uint8List? _binaryPayload;
 
   /// Channel through which the message was sent.
   final PhoenixChannel _channel;
@@ -153,13 +172,28 @@ class Push {
 
     startTimeout();
     try {
-      await _channel.socket.sendMessage(Message(
-        event: event!,
-        topic: _channel.topic,
-        payload: payload!(),
-        ref: ref,
-        joinRef: _channel.joinRef,
-      ));
+      late Message message;
+      if (_binaryPayload != null) {
+        // Create binary message
+        message = Message.binary(
+          event: event!,
+          topic: _channel.topic,
+          payload: _binaryPayload!,
+          ref: ref,
+          joinRef: _channel.joinRef,
+        );
+      } else {
+        // Create regular JSON message
+        message = Message(
+          event: event!,
+          topic: _channel.topic,
+          payload: payload!(),
+          ref: ref,
+          joinRef: _channel.joinRef,
+        );
+      }
+      
+      await _channel.socket.sendMessage(message);
       // ignore: avoid_catches_without_on_clauses
     } catch (err, stacktrace) {
       _logger.warning(
